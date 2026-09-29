@@ -4,7 +4,7 @@
 static int get_php_bin_path(pid_t pid, char *path_root, char *path);
 static int get_php_base_addr(pid_t pid, char *path_root, char *path, uint64_t *raddr);
 static int get_symbol_offset(char *path_root, const char *symbol, uint64_t *raddr);
-static int get_symbol_path(char *symbol_path, const char *path_root);
+static int get_symbol_path(char *symbol_path, const char *path_root, pid_t pid);
 static int popen_read_line(char *buf, size_t buf_size, char *cmd_fmt, ...);
 
 int shell_escape(const char *arg, char *buf, size_t buf_size, const char *what) {
@@ -68,7 +68,7 @@ int get_symbol_addr(addr_memo *memo, pid_t pid, const char *symbol, uint64_t *ra
         return 1;
     }
 
-    if (*php_symbol_path == '\0' && get_symbol_path(php_symbol_path, php_bin_path_root) != 0) {
+    if (*php_symbol_path == '\0' && get_symbol_path(php_symbol_path, php_bin_path_root, pid) != 0) {
         strcpy(php_symbol_path, php_bin_path_root);
     }
 
@@ -80,7 +80,7 @@ int get_symbol_addr(addr_memo *memo, pid_t pid, const char *symbol, uint64_t *ra
     return 0;
 }
 
-static int get_symbol_path(char *symbol_path, const char *path_root) {
+static int get_symbol_path(char *symbol_path, const char *path_root, pid_t pid) {
     char buf[PHPSPY_STR_SIZE];
     char arg_buf[PHPSPY_STR_SIZE];
     char *cmd_fmt = "readelf -n %s | awk '/Build ID/{print $3; exit}'";
@@ -95,7 +95,14 @@ static int get_symbol_path(char *symbol_path, const char *path_root) {
         log_error("get_symbol_path: Build ID is too short\n");
         return 1;
     }
-    if (snprintf(symbol_path, PHPSPY_STR_SIZE, "/usr/lib/debug/.build-id/%c%c/%s.debug", buf[0], buf[1], buf+2) > PHPSPY_STR_SIZE - 1) {
+    int n = snprintf(symbol_path, PHPSPY_STR_SIZE, "/proc/%d/root/usr/lib/debug/.build-id/%c%c/%s.debug",
+        (int)pid, buf[0], buf[1], buf+2);
+    if (n >= 0 && n < PHPSPY_STR_SIZE && access(symbol_path, F_OK) == 0) {
+        return 0;
+    }
+
+    n = snprintf(symbol_path, PHPSPY_STR_SIZE, "/usr/lib/debug/.build-id/%c%c/%s.debug", buf[0], buf[1], buf+2);
+    if (n < 0 || n >= PHPSPY_STR_SIZE) {
         log_error("get_symbol_path: snprintf overflow\n");
         return 1;
     }
